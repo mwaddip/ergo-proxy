@@ -87,3 +87,62 @@ fn zigzag_roundtrip() {
         assert_eq!(decoded, val, "zigzag roundtrip failed for {}", val);
     }
 }
+
+// --- Frame tests ---
+
+use ergo_proxy_node::transport::frame::{self, Frame};
+use ergo_proxy_node::types::Network;
+
+#[test]
+fn frame_encode_decode_roundtrip() {
+    let magic = Network::Testnet.magic();
+    let original = Frame { code: 55, body: vec![2, 0, 1, 2, 3] };
+    let bytes = frame::encode(&magic, &original);
+    assert_eq!(bytes.len(), 13 + original.body.len());
+    let decoded = frame::decode(&magic, &bytes).unwrap();
+    assert_eq!(decoded.code, original.code);
+    assert_eq!(decoded.body, original.body);
+}
+
+#[test]
+fn frame_decode_bad_magic_returns_error() {
+    let magic = Network::Testnet.magic();
+    let f = Frame { code: 1, body: vec![] };
+    let mut bytes = frame::encode(&magic, &f);
+    bytes[0] = 0xff;
+    assert!(frame::decode(&magic, &bytes).is_err());
+}
+
+#[test]
+fn frame_decode_bad_checksum_returns_error() {
+    let magic = Network::Testnet.magic();
+    let f = Frame { code: 1, body: vec![1, 2, 3] };
+    let mut bytes = frame::encode(&magic, &f);
+    let last = bytes.len() - 1;
+    bytes[last] ^= 0xff;
+    assert!(frame::decode(&magic, &bytes).is_err());
+}
+
+#[test]
+fn frame_decode_empty_body() {
+    let magic = Network::Testnet.magic();
+    let f = Frame { code: 1, body: vec![] };
+    let bytes = frame::encode(&magic, &f);
+    let decoded = frame::decode(&magic, &bytes).unwrap();
+    assert_eq!(decoded.code, 1);
+    assert!(decoded.body.is_empty());
+}
+
+#[test]
+fn frame_encode_checksum_is_blake2b256_prefix() {
+    use blake2::digest::consts::U32;
+    use blake2::{Blake2b, Digest};
+    type Blake2b256 = Blake2b<U32>;
+
+    let magic = Network::Testnet.magic();
+    let body = vec![0xde, 0xad, 0xbe, 0xef];
+    let f = Frame { code: 55, body: body.clone() };
+    let bytes = frame::encode(&magic, &f);
+    let expected_checksum = &Blake2b256::digest(&body)[..4];
+    assert_eq!(&bytes[9..13], expected_checksum);
+}
