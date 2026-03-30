@@ -120,3 +120,146 @@ fn sync_tracker_purge_outbound() {
     assert_eq!(tracker.outbound_for(&PeerId(1)), None);
     assert_eq!(tracker.inbound_for(&PeerId(10)), None);
 }
+
+// --- Router tests ---
+
+use ergo_proxy_node::routing::router::{Router, Action};
+use ergo_proxy_node::protocol::messages::ProtocolMessage;
+use ergo_proxy_node::protocol::peer::ProtocolEvent;
+use ergo_proxy_node::types::{Direction, ProxyMode};
+
+#[test]
+fn router_inv_from_outbound_forwards_to_inbound() {
+    let mut router = Router::new();
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full);
+    router.register_peer(PeerId(3), Direction::Inbound, ProxyMode::Full);
+
+    let event = ProtocolEvent::Message {
+        peer_id: PeerId(1),
+        message: ProtocolMessage::Inv { modifier_type: 2, ids: vec![[0xaa; 32]] },
+    };
+
+    let actions = router.handle_event(event);
+    let targets: Vec<PeerId> = actions.iter().filter_map(|a| match a {
+        Action::Send { target, .. } => Some(*target),
+    }).collect();
+    assert!(targets.contains(&PeerId(2)));
+    assert!(targets.contains(&PeerId(3)));
+    assert!(!targets.contains(&PeerId(1)));
+}
+
+#[test]
+fn router_modifier_request_routes_via_inv_table() {
+    let mut router = Router::new();
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full);
+
+    router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(1),
+        message: ProtocolMessage::Inv { modifier_type: 2, ids: vec![[0xaa; 32]] },
+    });
+
+    let actions = router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(2),
+        message: ProtocolMessage::ModifierRequest { modifier_type: 2, ids: vec![[0xaa; 32]] },
+    });
+
+    let targets: Vec<PeerId> = actions.iter().filter_map(|a| match a {
+        Action::Send { target, .. } => Some(*target),
+    }).collect();
+    assert_eq!(targets, vec![PeerId(1)]);
+}
+
+#[test]
+fn router_modifier_response_routes_to_requester() {
+    let mut router = Router::new();
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full);
+
+    router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(1),
+        message: ProtocolMessage::Inv { modifier_type: 2, ids: vec![[0xaa; 32]] },
+    });
+    router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(2),
+        message: ProtocolMessage::ModifierRequest { modifier_type: 2, ids: vec![[0xaa; 32]] },
+    });
+
+    let actions = router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(1),
+        message: ProtocolMessage::ModifierResponse {
+            modifier_type: 2,
+            modifiers: vec![([0xaa; 32], vec![1, 2, 3])],
+        },
+    });
+
+    let targets: Vec<PeerId> = actions.iter().filter_map(|a| match a {
+        Action::Send { target, .. } => Some(*target),
+    }).collect();
+    assert_eq!(targets, vec![PeerId(2)]);
+}
+
+#[test]
+fn router_get_peers_handled_directly() {
+    let mut router = Router::new();
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
+
+    let actions = router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(1),
+        message: ProtocolMessage::GetPeers,
+    });
+
+    assert!(actions.iter().any(|a| matches!(a, Action::Send { target, message }
+        if *target == PeerId(1) && matches!(message, ProtocolMessage::Peers { .. })
+    )));
+}
+
+#[test]
+fn router_light_mode_drops_sync_info() {
+    let mut router = Router::new();
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Light);
+
+    let actions = router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(2),
+        message: ProtocolMessage::SyncInfo { body: vec![1, 2, 3] },
+    });
+    assert!(actions.is_empty());
+}
+
+#[test]
+fn router_full_mode_forwards_sync_info() {
+    let mut router = Router::new();
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full);
+
+    let actions = router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(2),
+        message: ProtocolMessage::SyncInfo { body: vec![1, 2, 3] },
+    });
+    assert!(!actions.is_empty());
+}
+
+#[test]
+fn router_peer_disconnect_purges_state() {
+    let mut router = Router::new();
+    router.register_peer(PeerId(1), Direction::Outbound, ProxyMode::Full);
+    router.register_peer(PeerId(2), Direction::Inbound, ProxyMode::Full);
+
+    router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(1),
+        message: ProtocolMessage::Inv { modifier_type: 2, ids: vec![[0xaa; 32]] },
+    });
+
+    router.handle_event(ProtocolEvent::PeerDisconnected {
+        peer_id: PeerId(1),
+        reason: "gone".into(),
+    });
+
+    let actions = router.handle_event(ProtocolEvent::Message {
+        peer_id: PeerId(2),
+        message: ProtocolMessage::ModifierRequest { modifier_type: 2, ids: vec![[0xaa; 32]] },
+    });
+    assert!(actions.is_empty());
+}
