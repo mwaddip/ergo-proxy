@@ -146,3 +146,107 @@ fn frame_encode_checksum_is_blake2b256_prefix() {
     let expected_checksum = &Blake2b256::digest(&body)[..4];
     assert_eq!(&bytes[9..13], expected_checksum);
 }
+
+// --- Handshake tests ---
+
+use ergo_proxy_node::transport::handshake::{self, HandshakeConfig};
+use ergo_proxy_node::types::{Version, ProxyMode};
+
+#[test]
+fn handshake_build_parse_roundtrip() {
+    let config = HandshakeConfig {
+        agent_name: "ergo-proxy".to_string(),
+        peer_name: "test-node".to_string(),
+        version: Version::new(6, 0, 3),
+        network: Network::Testnet,
+        mode: ProxyMode::Full,
+        declared_address: None,
+    };
+    let bytes = handshake::build(&config);
+    let spec = handshake::parse(&bytes).unwrap();
+
+    assert_eq!(spec.agent, "ergo-proxy");
+    assert_eq!(spec.name, "test-node");
+    assert_eq!(spec.version, Version::new(6, 0, 3));
+    assert_eq!(spec.address, None);
+    assert!(spec.features.len() >= 2);
+}
+
+#[test]
+fn handshake_full_mode_feature() {
+    let config = HandshakeConfig {
+        agent_name: "test".to_string(),
+        peer_name: "test".to_string(),
+        version: Version::new(6, 0, 3),
+        network: Network::Testnet,
+        mode: ProxyMode::Full,
+        declared_address: None,
+    };
+    let bytes = handshake::build(&config);
+    let spec = handshake::parse(&bytes).unwrap();
+    let mode_feat = spec.features.iter().find(|f| f.id == 16).unwrap();
+    assert_eq!(mode_feat.body, vec![0x00, 0x01, 0x00, 0x01]);
+}
+
+#[test]
+fn handshake_light_mode_feature() {
+    let config = HandshakeConfig {
+        agent_name: "test".to_string(),
+        peer_name: "test".to_string(),
+        version: Version::new(6, 0, 3),
+        network: Network::Testnet,
+        mode: ProxyMode::Light,
+        declared_address: None,
+    };
+    let bytes = handshake::build(&config);
+    let spec = handshake::parse(&bytes).unwrap();
+    let mode_feat = spec.features.iter().find(|f| f.id == 16).unwrap();
+    assert_eq!(mode_feat.body, vec![0x00, 0x01, 0x01, 0x02, 0x01]);
+}
+
+#[test]
+fn handshake_session_feature_has_correct_magic() {
+    let config = HandshakeConfig {
+        agent_name: "test".to_string(),
+        peer_name: "test".to_string(),
+        version: Version::new(6, 0, 3),
+        network: Network::Testnet,
+        mode: ProxyMode::Full,
+        declared_address: None,
+    };
+    let bytes = handshake::build(&config);
+    let spec = handshake::parse(&bytes).unwrap();
+    let session_feat = spec.features.iter().find(|f| f.id == 3).unwrap();
+    assert_eq!(&session_feat.body[0..4], &[2, 3, 2, 3]);
+    assert_eq!(session_feat.body.len(), 12);
+}
+
+#[test]
+fn handshake_version_validation() {
+    let config = HandshakeConfig {
+        agent_name: "test".to_string(),
+        peer_name: "test".to_string(),
+        version: Version::new(3, 0, 0),
+        network: Network::Testnet,
+        mode: ProxyMode::Full,
+        declared_address: None,
+    };
+    let bytes = handshake::build(&config);
+    let spec = handshake::parse(&bytes).unwrap();
+    assert!(handshake::validate_peer(&spec, &Network::Testnet).is_err());
+}
+
+#[test]
+fn handshake_valid_peer_accepted() {
+    let config = HandshakeConfig {
+        agent_name: "ergoref".to_string(),
+        peer_name: "test-node".to_string(),
+        version: Version::new(6, 0, 3),
+        network: Network::Testnet,
+        mode: ProxyMode::Full,
+        declared_address: None,
+    };
+    let bytes = handshake::build(&config);
+    let spec = handshake::parse(&bytes).unwrap();
+    assert!(handshake::validate_peer(&spec, &Network::Testnet).is_ok());
+}
