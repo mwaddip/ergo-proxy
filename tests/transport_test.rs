@@ -218,7 +218,8 @@ fn handshake_session_feature_has_correct_magic() {
     let spec = handshake::parse(&bytes).unwrap();
     let session_feat = spec.features.iter().find(|f| f.id == 3).unwrap();
     assert_eq!(&session_feat.body[0..4], &[2, 3, 2, 3]);
-    assert_eq!(session_feat.body.len(), 12);
+    // Session body: 4 magic + VLQ(ZigZag(random_i64)), variable length 5-14 bytes
+    assert!(session_feat.body.len() >= 5 && session_feat.body.len() <= 14);
 }
 
 #[test]

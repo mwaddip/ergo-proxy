@@ -75,7 +75,8 @@ pub fn build(config: &HandshakeConfig) -> Vec<u8> {
             };
             buf.push((ip_bytes.len() + 4) as u8);
             buf.extend_from_slice(&ip_bytes);
-            buf.extend_from_slice(&(addr.port() as u32).to_be_bytes());
+            // Port is VLQ-encoded (Scorex putUInt → putULong → VLQ)
+            vlq::write_vlq(&mut buf, addr.port() as u64);
         }
     }
 
@@ -85,13 +86,14 @@ pub fn build(config: &HandshakeConfig) -> Vec<u8> {
     // Mode feature (id=16)
     buf.push(FEATURE_MODE);
     let mode_body = build_mode_body(config.mode);
-    buf.extend_from_slice(&(mode_body.len() as u16).to_be_bytes());
+    // Feature body length is VLQ-encoded (Scorex putUShort → putUInt → putULong → VLQ)
+    vlq::write_vlq(&mut buf, mode_body.len() as u64);
     buf.extend_from_slice(&mode_body);
 
     // Session feature (id=3)
     buf.push(FEATURE_SESSION);
     let session_body = build_session_body(config.network);
-    buf.extend_from_slice(&(session_body.len() as u16).to_be_bytes());
+    vlq::write_vlq(&mut buf, session_body.len() as u64);
     buf.extend_from_slice(&session_body);
 
     buf
@@ -112,10 +114,12 @@ fn build_mode_body(mode: ProxyMode) -> Vec<u8> {
 }
 
 fn build_session_body(network: Network) -> Vec<u8> {
-    let mut body = Vec::with_capacity(12);
+    let mut body = Vec::with_capacity(16);
     body.extend_from_slice(&network.magic());
-    let session_id = rand_u64();
-    body.extend_from_slice(&session_id.to_be_bytes());
+    // Session ID is putLong = ZigZag encode then VLQ
+    let session_id = rand_u64() as i64;
+    let zigzag = vlq::zigzag_encode_i64(session_id);
+    vlq::write_vlq(&mut body, zigzag);
     body
 }
 
@@ -198,9 +202,8 @@ fn parse_address<R: Read>(reader: &mut R) -> io::Result<Option<SocketAddr>> {
     let ip_len = (addr_len_byte[0] as usize).saturating_sub(4);
     let mut ip_bytes = vec![0u8; ip_len];
     reader.read_exact(&mut ip_bytes)?;
-    let mut port_bytes = [0u8; 4];
-    reader.read_exact(&mut port_bytes)?;
-    let port = u32::from_be_bytes(port_bytes) as u16;
+    // Port is VLQ-encoded (Scorex getUInt → VLQ)
+    let port = vlq::read_vlq(reader)? as u16;
 
     match ip_len {
         4 => Ok(Some(SocketAddr::new(
@@ -226,11 +229,11 @@ fn parse_features<R: Read>(reader: &mut R) -> io::Result<Vec<Feature>> {
             if reader.read_exact(&mut fid).is_err() {
                 break;
             }
-            let mut flen_bytes = [0u8; 2];
-            if reader.read_exact(&mut flen_bytes).is_err() {
-                break;
-            }
-            let flen = u16::from_be_bytes(flen_bytes) as usize;
+            // Feature body length is VLQ-encoded (Scorex getUShort → VLQ)
+            let flen = match vlq::read_vlq_length(reader) {
+                Ok(len) => len,
+                Err(_) => break,
+            };
             let mut fbody = vec![0u8; flen];
             if reader.read_exact(&mut fbody).is_err() {
                 break;

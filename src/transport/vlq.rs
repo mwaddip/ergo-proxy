@@ -84,6 +84,16 @@ pub fn zigzag_decode(value: u32) -> i32 {
     ((value >> 1) as i32) ^ (-((value & 1) as i32))
 }
 
+/// ZigZag-encode a signed i64 into an unsigned u64.
+pub fn zigzag_encode_i64(value: i64) -> u64 {
+    ((value << 1) ^ (value >> 63)) as u64
+}
+
+/// ZigZag-decode an unsigned u64 back into a signed i64.
+pub fn zigzag_decode_i64(value: u64) -> i64 {
+    ((value >> 1) as i64) ^ (-((value & 1) as i64))
+}
+
 /// Write a UTF-8 string prefixed by its byte length as a single u8.
 ///
 /// # Precondition
