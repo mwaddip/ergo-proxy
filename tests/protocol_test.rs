@@ -109,3 +109,75 @@ fn inv_to_frame_roundtrip() {
     assert_eq!(back.code, frame.code);
     assert_eq!(back.body, frame.body);
 }
+
+// --- Peer state machine tests ---
+
+use ergo_proxy_node::protocol::peer::{PeerState, PeerStateMachine, ProtocolEvent};
+use ergo_proxy_node::types::{PeerId, Direction, Version};
+use ergo_proxy_node::transport::handshake::PeerSpec;
+
+#[test]
+fn peer_starts_connecting() {
+    let peer = PeerStateMachine::new(PeerId(1), Direction::Outbound);
+    assert_eq!(peer.state(), PeerState::Connecting);
+}
+
+#[test]
+fn peer_transitions_to_handshaking() {
+    let mut peer = PeerStateMachine::new(PeerId(1), Direction::Outbound);
+    peer.set_handshaking();
+    assert_eq!(peer.state(), PeerState::Handshaking);
+}
+
+#[test]
+fn peer_transitions_to_active() {
+    let mut peer = PeerStateMachine::new(PeerId(1), Direction::Outbound);
+    peer.set_handshaking();
+    let spec = PeerSpec {
+        agent: "test".into(),
+        version: Version::new(6, 0, 3),
+        name: "test-node".into(),
+        address: None,
+        features: vec![],
+    };
+    let event = peer.set_active(spec);
+    assert_eq!(peer.state(), PeerState::Active);
+    match event {
+        ProtocolEvent::PeerConnected { peer_id, direction, .. } => {
+            assert_eq!(peer_id, PeerId(1));
+            assert_eq!(direction, Direction::Outbound);
+        }
+        _ => panic!("Expected PeerConnected"),
+    }
+}
+
+#[test]
+fn peer_transitions_to_disconnected() {
+    let mut peer = PeerStateMachine::new(PeerId(1), Direction::Outbound);
+    peer.set_handshaking();
+    let spec = PeerSpec {
+        agent: "test".into(),
+        version: Version::new(6, 0, 3),
+        name: "test-node".into(),
+        address: None,
+        features: vec![],
+    };
+    peer.set_active(spec);
+    let event = peer.set_disconnected("test reason".into());
+    assert_eq!(peer.state(), PeerState::Disconnected);
+    match event {
+        ProtocolEvent::PeerDisconnected { peer_id, reason } => {
+            assert_eq!(peer_id, PeerId(1));
+            assert_eq!(reason, "test reason");
+        }
+        _ => panic!("Expected PeerDisconnected"),
+    }
+}
+
+#[test]
+fn peer_transitions_to_failed() {
+    let mut peer = PeerStateMachine::new(PeerId(1), Direction::Outbound);
+    peer.set_handshaking();
+    peer.set_failed("bad version".into());
+    assert_eq!(peer.state(), PeerState::Failed);
+}
