@@ -1,15 +1,17 @@
 [proxy]
 network = "testnet"
 
+# Dual-stack: [::] accepts both IPv6 and IPv4 connections
 [listen.ipv6]
 address = "[::]:9030"
 mode = "full"
 max_inbound = 20
 
-[listen.ipv4]
-address = "0.0.0.0:9030"
-mode = "light"
-max_inbound = 20
+# Uncomment for a separate IPv4-only listener on a different port
+# [listen.ipv4]
+# address = "0.0.0.0:9031"
+# mode = "light"
+# max_inbound = 20
 
 [outbound]
 min_peers = 3
