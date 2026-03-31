@@ -99,6 +99,71 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // RRD latency stats: update every 30 seconds
+    {
+        let router = router.clone();
+        tokio::spawn(async move {
+            // Create RRD if rrdtool is available
+            let rrd_path = "/var/lib/ergo-proxy/latency.rrd";
+            let rrd_available = tokio::process::Command::new("rrdtool")
+                .arg("info")
+                .arg(rrd_path)
+                .output()
+                .await
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+
+            if !rrd_available {
+                // Try to create the RRD file
+                let create_result = tokio::process::Command::new("rrdtool")
+                    .args([
+                        "create", rrd_path,
+                        "--step", "30",
+                        "DS:min:GAUGE:60:0:U",
+                        "DS:avg:GAUGE:60:0:U",
+                        "DS:max:GAUGE:60:0:U",
+                        "DS:peers:GAUGE:60:0:U",
+                        "RRA:AVERAGE:0.5:1:2880",    // 30s resolution, 24 hours
+                        "RRA:AVERAGE:0.5:10:8640",    // 5min resolution, 30 days
+                        "RRA:AVERAGE:0.5:120:8760",   // 1hr resolution, 1 year
+                        "RRA:MAX:0.5:1:2880",
+                        "RRA:MAX:0.5:10:8640",
+                    ])
+                    .output()
+                    .await;
+
+                match create_result {
+                    Ok(o) if o.status.success() => {
+                        tracing::info!("Created RRD at {}", rrd_path);
+                    }
+                    Ok(o) => {
+                        tracing::warn!("rrdtool create failed: {}", String::from_utf8_lossy(&o.stderr));
+                        return;
+                    }
+                    Err(_) => {
+                        tracing::info!("rrdtool not available, latency RRD disabled");
+                        return;
+                    }
+                }
+            }
+
+            let mut ticker = interval(Duration::from_secs(30));
+            loop {
+                ticker.tick().await;
+                if let Some(stats) = router.lock().await.latency_stats() {
+                    let update = format!(
+                        "N:{:.1}:{:.1}:{:.1}:{}",
+                        stats.min_ms, stats.avg_ms, stats.max_ms, stats.peer_count
+                    );
+                    let _ = tokio::process::Command::new("rrdtool")
+                        .args(["update", rrd_path, &update])
+                        .output()
+                        .await;
+                }
+            }
+        });
+    }
+
     // Main event loop
     loop {
         match event_rx.recv().await {

@@ -11,6 +11,7 @@
 use crate::protocol::messages::ProtocolMessage;
 use crate::protocol::peer::ProtocolEvent;
 use crate::routing::inv_table::InvTable;
+use crate::routing::latency::{LatencyTracker, LatencyStats};
 use crate::routing::tracker::{RequestTracker, SyncTracker};
 use crate::types::{Direction, PeerId, ProxyMode};
 use std::collections::HashMap;
@@ -34,6 +35,7 @@ pub struct Router {
     inv_table: InvTable,
     request_tracker: RequestTracker,
     sync_tracker: SyncTracker,
+    latency_tracker: LatencyTracker,
 }
 
 impl Router {
@@ -43,6 +45,7 @@ impl Router {
             inv_table: InvTable::new(),
             request_tracker: RequestTracker::new(),
             sync_tracker: SyncTracker::new(),
+            latency_tracker: LatencyTracker::new(),
         }
     }
 
@@ -60,6 +63,7 @@ impl Router {
                 self.inv_table.purge_peer(peer_id);
                 self.request_tracker.purge_peer(peer_id);
                 self.sync_tracker.purge_peer(peer_id);
+                self.latency_tracker.purge_peer(peer_id);
                 self.peers.remove(&peer_id);
                 vec![]
             }
@@ -107,6 +111,7 @@ impl Router {
                     if let Some(target) = self.inv_table.lookup(id) {
                         if target != source {
                             self.request_tracker.record(*id, source);
+                            self.latency_tracker.record_request(*id, target);
                             actions.push(Action::Send {
                                 target,
                                 message: ProtocolMessage::ModifierRequest {
@@ -123,6 +128,7 @@ impl Router {
             ProtocolMessage::ModifierResponse { modifier_type, modifiers } => {
                 let mut actions = Vec::new();
                 for (id, data) in &modifiers {
+                    self.latency_tracker.record_response(id);
                     if let Some(requester) = self.request_tracker.fulfill(id) {
                         actions.push(Action::Send {
                             target: requester,
@@ -215,5 +221,9 @@ impl Router {
 
     pub fn peer_count(&self) -> usize {
         self.peers.len()
+    }
+
+    pub fn latency_stats(&self) -> Option<LatencyStats> {
+        self.latency_tracker.stats()
     }
 }
