@@ -10,7 +10,7 @@ use protocol::peer::ProtocolEvent;
 use routing::router::{Action, Router};
 use transport::connection::Connection;
 use transport::frame::Frame;
-use transport::handshake::HandshakeConfig;
+use transport::handshake::{self, HandshakeConfig};
 use types::{Direction, Network, PeerId, ProxyMode, Version};
 
 use std::collections::HashMap;
@@ -241,6 +241,10 @@ async fn outbound_manager(
                         tokio::spawn(async move {
                             match Connection::outbound(stream, &hs).await {
                                 Ok(conn) => {
+                                    if handshake::is_proxy(conn.peer_spec()) {
+                                        tracing::info!(peer = %peer_id, addr = %addr, "Outbound peer is a proxy, skipping");
+                                        return;
+                                    }
                                     tracing::info!(peer = %peer_id, "Outbound handshake OK");
                                     run_peer(peer_id, conn, Direction::Outbound, mode, event_tx, peer_senders, router).await;
                                 }

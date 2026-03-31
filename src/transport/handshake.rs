@@ -17,6 +17,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const FEATURE_MODE: u8 = 16;
 const FEATURE_SESSION: u8 = 3;
+/// Custom feature identifying this peer as a proxy. JVM nodes ignore unknown features.
+/// Other proxies detect this and avoid treating each other as outbound content sources.
+pub const FEATURE_PROXY: u8 = 64;
 
 /// Configuration for building a handshake.
 pub struct HandshakeConfig {
@@ -80,8 +83,8 @@ pub fn build(config: &HandshakeConfig) -> Vec<u8> {
         }
     }
 
-    // Features: Mode + Session
-    buf.push(2); // feature count
+    // Features: Mode + Session + Proxy
+    buf.push(3); // feature count
 
     // Mode feature (id=16)
     buf.push(FEATURE_MODE);
@@ -95,6 +98,11 @@ pub fn build(config: &HandshakeConfig) -> Vec<u8> {
     let session_body = build_session_body(config.network);
     vlq::write_vlq(&mut buf, session_body.len() as u64);
     buf.extend_from_slice(&session_body);
+
+    // Proxy feature (id=64) — signals this peer is a relay proxy
+    buf.push(FEATURE_PROXY);
+    vlq::write_vlq(&mut buf, 1); // body length = 1
+    buf.push(0x01); // proxy protocol version 1
 
     buf
 }
@@ -272,6 +280,11 @@ pub fn validate_peer(spec: &PeerSpec, network: &Network) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Check if a peer's handshake indicates it is a proxy.
+pub fn is_proxy(spec: &PeerSpec) -> bool {
+    spec.features.iter().any(|f| f.id == FEATURE_PROXY)
 }
 
 /// Measure the exact byte size of a handshake payload by parsing it.
