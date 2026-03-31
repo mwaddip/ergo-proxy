@@ -157,14 +157,15 @@ async fn accept_loop(
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
+                let remote_ip = addr.ip();
                 let inbound_count = router.lock().await.inbound_peers().len();
                 if inbound_count >= max_inbound {
-                    tracing::warn!(addr = %addr, "Max inbound reached, rejecting");
+                    tracing::warn!(ip = %remote_ip, "F2B_REJECT connection limit exceeded");
                     continue;
                 }
 
                 let peer_id = PeerId(peer_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
-                tracing::info!(peer = %peer_id, addr = %addr, "Inbound connection");
+                tracing::info!(peer = %peer_id, ip = %remote_ip, "Inbound connection");
 
                 let hs = HandshakeConfig {
                     agent_name: hs_config.agent_name.clone(),
@@ -184,7 +185,7 @@ async fn accept_loop(
                             run_peer(peer_id, conn, Direction::Inbound, mode, event_tx, peer_senders, router).await;
                         }
                         Err(e) => {
-                            tracing::warn!(peer = %peer_id, error = %e, "Inbound handshake failed");
+                            tracing::warn!(ip = %remote_ip, error = %e, "F2B_HANDSHAKE_FAIL bad handshake");
                         }
                     }
                 });
