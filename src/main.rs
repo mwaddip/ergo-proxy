@@ -150,16 +150,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut ticker = interval(Duration::from_secs(30));
             loop {
                 ticker.tick().await;
-                if let Some(stats) = router.lock().await.latency_stats() {
-                    let update = format!(
+                let r = router.lock().await;
+                let peer_count = r.outbound_peers().len();
+                let update = match r.latency_stats() {
+                    Some(stats) => format!(
                         "N:{:.1}:{:.1}:{:.1}:{}",
                         stats.min_ms, stats.avg_ms, stats.max_ms, stats.peer_count
-                    );
-                    let _ = tokio::process::Command::new("rrdtool")
-                        .args(["update", rrd_path, &update])
-                        .output()
-                        .await;
-                }
+                    ),
+                    None => format!("N:U:U:U:{}", peer_count),
+                };
+                drop(r);
+                let _ = tokio::process::Command::new("rrdtool")
+                    .args(["update", rrd_path, &update])
+                    .output()
+                    .await;
             }
         });
     }
