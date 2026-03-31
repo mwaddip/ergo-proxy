@@ -50,6 +50,9 @@ done
 # Build .deb
 dpkg-deb --build "target/${PKG}"
 
+# Clean up staging directory
+rm -rf "target/${PKG}"
+
 echo ""
 echo "Built: target/${PKG}.deb"
 ls -lh "target/${PKG}.deb"
