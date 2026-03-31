@@ -128,6 +128,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         "RRA:AVERAGE:0.5:120:8760",   // 1hr resolution, 1 year
                         "RRA:MAX:0.5:1:2880",
                         "RRA:MAX:0.5:10:8640",
+                        "RRA:LAST:0.5:1:2880",        // last value, for peer count
+                        "RRA:LAST:0.5:10:8640",
                     ])
                     .output()
                     .await;

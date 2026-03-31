@@ -94,7 +94,7 @@ rrdtool graph "$OUT/peers-24h.png" \
     --lower-limit 0 \
     --rigid \
     --units-exponent 0 \
-    "DEF:peers=$RRD:peers:AVERAGE" \
+    "DEF:peers=$RRD:peers:LAST" \
     "CDEF:ipeers=peers,UN,0,peers,IF" \
     "CDEF:dpeers=peers,UN,UNKN,peers,IF" \
     "AREA:dpeers#2b6777:Peers" \
